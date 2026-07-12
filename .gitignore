@@ -1,0 +1,9 @@
+/build/
+/install/
+/calibrations/
+/fieldmaps/
+__pycache__/
+*.py[cod]
+*.root
+*.hepmc
+*.log
