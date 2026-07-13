@@ -134,8 +134,9 @@ GaussFit2DResult fitGaussian2D(const std::vector<double>& xPositions, const std:
 
     GaussFit2DResult result;
 
+    // Three free parameters (A, muX, muY); require at least that many pads.
     const std::size_t nPts = xPositions.size();
-    if (nPts != yPositions.size() || nPts != charges.size() || nPts < 6) {
+    if (nPts != yPositions.size() || nPts != charges.size() || nPts < 3) {
         return result;
     }
 
@@ -143,40 +144,19 @@ GaussFit2DResult fitGaussian2D(const std::vector<double>& xPositions, const std:
     auto [minIt, maxIt] = std::minmax_element(charges.begin(), charges.end());
     const double qMin = *minIt;
     const double qMax = *maxIt;
-    const double A0 = std::max(constants::kMinAmplitude, qMax - qMin);
-    const double B0 = qMin;
+    // Baseline is pinned to zero: the peak sits at amplitude ~ qMax.
+    const double A0 = std::max(constants::kMinAmplitude, qMax);
+    const double peakProminence = qMax - qMin;
 
     // Find position of maximum charge
     const std::size_t maxIdx = std::distance(charges.begin(), maxIt);
     const double muX0 = xPositions[maxIdx];
     const double muY0 = yPositions[maxIdx];
 
-    // Estimate initial sigmas from weighted variance
-    auto estimateSigma2D = [&](bool forX) -> double {
-        double wsum = 0.0, m = 0.0;
-        for (std::size_t i = 0; i < nPts; ++i) {
-            const double w = std::max(0.0, charges[i] - B0);
-            const double c = forX ? xPositions[i] : yPositions[i];
-            wsum += w;
-            m += w * c;
-        }
-        if (wsum <= 0.0) {
-            return std::clamp(0.25 * config.pixelSpacing, config.sigmaLo, config.sigmaHi);
-        }
-        m /= wsum;
-        double var = 0.0;
-        for (std::size_t i = 0; i < nPts; ++i) {
-            const double w = std::max(0.0, charges[i] - B0);
-            const double c = forX ? xPositions[i] : yPositions[i];
-            const double d = c - m;
-            var += w * d * d;
-        }
-        var /= wsum;
-        return std::clamp(std::sqrt(std::max(var, 1e-12)), config.sigmaLo, config.sigmaHi);
-    };
-
-    const double sigX0 = estimateSigma2D(true);
-    const double sigY0 = estimateSigma2D(false);
+    // Width is a calibration input, not a fitted quantity. Default to half the
+    // pitch when the caller does not supply one.
+    const double sigmaFixed =
+        (config.sigmaFixed > 0.0) ? config.sigmaFixed : std::max(0.5 * config.pixelSpacing, 1e-6);
 
     // Calculate base uncertainty
     const bool useNoiseModel = config.gainSigma > 0.0 || config.noiseElectronSigma > 0.0;
@@ -205,6 +185,14 @@ GaussFit2DResult fitGaussian2D(const std::vector<double>& xPositions, const std:
         }
     }
 
+    // Reject clusters with no localizable peak: the brightest pad must rise at
+    // least a few error bars above the dimmest, otherwise the position is
+    // undefined and the caller should use the charge-weighted centroid instead.
+    constexpr double kPeakSignificance = 3.0;
+    if (!(peakProminence > kPeakSignificance * perPixelErrors[maxIdx])) {
+        return result; // converged == false
+    }
+
     // Find range
     auto [xMinIt, xMaxIt] = std::minmax_element(xPositions.begin(), xPositions.end());
     auto [yMinIt, yMaxIt] = std::minmax_element(yPositions.begin(), yPositions.end());
@@ -214,13 +202,17 @@ GaussFit2DResult fitGaussian2D(const std::vector<double>& xPositions, const std:
     const double yMin = *yMinIt - margin;
     const double yMax = *yMaxIt + margin;
 
-    // Set up TF2 for fitting (7 params: A, muX, muY, sigX, sigY, B, theta)
-    thread_local TF2 fitFunc("fitGauss2D", gauss2DPlusB, -1e9, 1e9, -1e9, 1e9, 7);
+    // Isotropic surrogate: baseline and rotation pinned to zero, a single width
+    // sigma. sigma floats only when requested AND the cluster has enough pads to
+    // leave a positive number of degrees of freedom (4 free params + 1); below
+    // that it is held at the calibration value to keep the position stable.
+    constexpr std::size_t kMinPtsToFloatSigma = 5;
+    const bool floatSigma = config.floatSigma && nPts >= kMinPtsToFloatSigma;
+
+    thread_local TF2 fitFunc("fitGauss2DIso", gauss2DIso, -1e9, 1e9, -1e9, 1e9, 4);
     fitFunc.SetRange(xMin, yMin, xMax, yMax);
 
     const double amplitudeMax = std::max(constants::kMinAmplitude, 2.0 * qMax);
-    const double baselineMax = std::max(constants::kMinAmplitude, qMax);
-    constexpr double kHalfPi = M_PI / 2.0;
 
     // Set up ROOT Fitter
     ROOT::Math::WrappedMultiTF1 wrapped(fitFunc, 2);
@@ -241,17 +233,15 @@ GaussFit2DResult fitGaussian2D(const std::vector<double>& xPositions, const std:
     fitter.Config().ParSettings(0).SetLimits(constants::kMinAmplitude, amplitudeMax);
     fitter.Config().ParSettings(1).SetLimits(config.muXLo, config.muXHi);
     fitter.Config().ParSettings(2).SetLimits(config.muYLo, config.muYHi);
-    fitter.Config().ParSettings(3).SetLimits(config.sigmaLo, config.sigmaHi);
-    fitter.Config().ParSettings(4).SetLimits(config.sigmaLo, config.sigmaHi);
-    fitter.Config().ParSettings(5).SetLimits(-baselineMax, baselineMax);
-    fitter.Config().ParSettings(6).SetLimits(-kHalfPi, kHalfPi);
     fitter.Config().ParSettings(0).SetValue(A0);
     fitter.Config().ParSettings(1).SetValue(muX0);
     fitter.Config().ParSettings(2).SetValue(muY0);
-    fitter.Config().ParSettings(3).SetValue(sigX0);
-    fitter.Config().ParSettings(4).SetValue(sigY0);
-    fitter.Config().ParSettings(5).SetValue(B0);
-    fitter.Config().ParSettings(6).SetValue(0.0);
+    fitter.Config().ParSettings(3).SetValue(sigmaFixed);
+    if (floatSigma) {
+        fitter.Config().ParSettings(3).SetLimits(config.sigmaLo, config.sigmaHi);
+    } else {
+        fitter.Config().ParSettings(3).Fix();
+    }
 
     bool ok = fitter.Fit(data);
     if (!ok) {
@@ -267,9 +257,9 @@ GaussFit2DResult fitGaussian2D(const std::vector<double>& xPositions, const std:
         result.muX = fitter.Result().Parameter(1);
         result.muY = fitter.Result().Parameter(2);
         result.sigmaX = fitter.Result().Parameter(3);
-        result.sigmaY = fitter.Result().Parameter(4);
-        result.B = fitter.Result().Parameter(5);
-        result.theta = fitter.Result().Parameter(6);
+        result.sigmaY = fitter.Result().Parameter(3);
+        result.B = 0.0;
+        result.theta = 0.0;
         result.chi2 = fitter.Result().Chi2();
         result.ndf = fitter.Result().Ndf();
         result.muXError = fitter.Result().Error(1);

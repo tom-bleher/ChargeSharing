@@ -172,3 +172,81 @@ TEST_CASE("LGADChargeSharingRecon separates encoded indices from sensor-local pa
     CHECK_THAT(result.nearestPixelCenterMM[0], WithinAbs(0.20, 1e-12));
     CHECK_THAT(result.nearestPixelCenterMM[1], WithinAbs(-0.10, 1e-12));
 }
+
+// ============================================================================
+// Channel aggregation (aggregate-before-electronics)
+// ============================================================================
+
+namespace {
+
+LGADChargeSharingRecon::PadContribution makeContribution(std::uint64_t cellID, double timeNs,
+                                                         double chargeC, int simHitIndex) {
+    LGADChargeSharingRecon::PadContribution c{};
+    c.cellID = cellID;
+    c.position = edm4hep::Vector3f{0.0f, 0.0f, 0.0f};
+    c.timeNs = timeNs;
+    c.inducedChargeC = chargeC;
+    c.inducedEnergyGeV = chargeC; // proportional; exact factor irrelevant here
+    c.simHitIndex = simHitIndex;
+    return c;
+}
+
+} // namespace
+
+TEST_CASE("aggregateChannels sums coincident same-pad contributions into one channel",
+          "[lgad][digitizer][aggregation]") {
+    std::vector<LGADChargeSharingRecon::PadContribution> contribs{
+        makeContribution(0x10, /*t=*/1.0, /*q=*/3.0, /*sim=*/0),
+        makeContribution(0x10, /*t=*/1.2, /*q=*/1.0, /*sim=*/1),
+    };
+
+    const auto channels =
+        LGADChargeSharingRecon::aggregateChannels(contribs, /*integrationWindowNs=*/1.0);
+
+    REQUIRE(channels.size() == 1);
+    CHECK(channels[0].cellID == 0x10);
+    CHECK_THAT(channels[0].chargeC, WithinRel(4.0, 1e-12));
+    CHECK_THAT(channels[0].energyGeV, WithinRel(4.0, 1e-12));
+    // Charge-weighted mean time: (3*1.0 + 1*1.2)/4 = 1.05
+    CHECK_THAT(channels[0].timeNs, WithinRel(1.05, 1e-12));
+
+    REQUIRE(channels[0].contributors.size() == 2);
+    double weightSum = 0.0;
+    for (const auto& [simIdx, weight] : channels[0].contributors) {
+        weightSum += weight;
+        if (simIdx == 0)
+            CHECK_THAT(weight, WithinRel(0.75, 1e-12));
+        if (simIdx == 1)
+            CHECK_THAT(weight, WithinRel(0.25, 1e-12));
+    }
+    CHECK_THAT(weightSum, WithinAbs(1.0, 1e-12));
+}
+
+TEST_CASE("aggregateChannels splits same-pad contributions outside the integration window",
+          "[lgad][digitizer][aggregation]") {
+    std::vector<LGADChargeSharingRecon::PadContribution> contribs{
+        makeContribution(0x10, /*t=*/1.0, /*q=*/2.0, /*sim=*/0),
+        makeContribution(0x10, /*t=*/50.0, /*q=*/5.0, /*sim=*/1),
+    };
+
+    const auto channels =
+        LGADChargeSharingRecon::aggregateChannels(contribs, /*integrationWindowNs=*/1.0);
+
+    REQUIRE(channels.size() == 2);
+    CHECK_THAT(channels[0].chargeC, WithinRel(2.0, 1e-12));
+    CHECK_THAT(channels[1].chargeC, WithinRel(5.0, 1e-12));
+}
+
+TEST_CASE("aggregateChannels keeps distinct pads separate", "[lgad][digitizer][aggregation]") {
+    std::vector<LGADChargeSharingRecon::PadContribution> contribs{
+        makeContribution(0x10, 1.0, 2.0, 0),
+        makeContribution(0x20, 1.0, 3.0, 0),
+    };
+
+    const auto channels =
+        LGADChargeSharingRecon::aggregateChannels(contribs, /*integrationWindowNs=*/1.0);
+
+    REQUIRE(channels.size() == 2);
+    CHECK(channels[0].cellID == 0x10);
+    CHECK(channels[1].cellID == 0x20);
+}

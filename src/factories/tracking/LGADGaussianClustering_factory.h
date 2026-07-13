@@ -36,6 +36,10 @@ private:
                                   "Time gate (ns) for union-find neighbour merge"};
     ParameterRef<double> m_fitErrorPercent{this, "fitErrorPercent", config().fitErrorPercent,
                                            "Fit uncertainty as percentage of cluster max charge"};
+    ParameterRef<double> m_fitSigmaMM{this, "fitSigmaMM", config().fitSigmaMM,
+                                      "Gaussian surrogate width (mm); 0 -> 0.5*pitch"};
+    ParameterRef<bool> m_fitFloatSigma{this, "fitFloatSigma", config().fitFloatSigma,
+                                       "Float the isotropic width when the cluster has enough pads"};
 
 public:
     void Configure() {

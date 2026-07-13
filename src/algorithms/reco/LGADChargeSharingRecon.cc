@@ -21,12 +21,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -275,7 +278,24 @@ void LGADChargeSharingRecon::process(const Input& input, const Output& output) c
     const double sensorT = m_geom.detectorThicknessMM;
     const double varZ = (sensorT * sensorT) / 12.0;
 
-    for (const auto& hit : *sim_hits) {
+    edm4eic::CovDiag3f posError;
+    if (useXZ) {
+        posError = edm4eic::CovDiag3f{static_cast<float>(defaultVarX), static_cast<float>(varZ),
+                                      static_cast<float>(defaultVarY)};
+    } else {
+        posError = edm4eic::CovDiag3f{static_cast<float>(defaultVarX), static_cast<float>(defaultVarY),
+                                      static_cast<float>(varZ)};
+    }
+
+    // ------------------------------------------------------------------
+    // Pass 1: spread every SimTrackerHit over its pad neighborhood and record
+    // the noiseless induced charge on each pad. No electronics yet.
+    // ------------------------------------------------------------------
+    std::vector<PadContribution> contributions;
+    contributions.reserve(sim_hits->size());
+
+    for (std::size_t hitIndex = 0; hitIndex < sim_hits->size(); ++hitIndex) {
+        const auto hit = (*sim_hits)[hitIndex];
         const double edep = hit.getEDep();
         if (edep < static_cast<double>(m_cfg.minEDepGeV)) {
             continue;
@@ -358,18 +378,12 @@ void LGADChargeSharingRecon::process(const Input& input, const Output& output) c
         }
 
         const auto result = processSingleHitImpl(singleInput);
-
-        edm4eic::CovDiag3f posError;
-        if (useXZ) {
-            posError = edm4eic::CovDiag3f{static_cast<float>(defaultVarX), static_cast<float>(varZ),
-                                          static_cast<float>(defaultVarY)};
-        } else {
-            posError = edm4eic::CovDiag3f{static_cast<float>(defaultVarX), static_cast<float>(defaultVarY),
-                                          static_cast<float>(varZ)};
+        if (!(result.totalCollectedChargeC > 0.0)) {
+            continue;
         }
 
         for (const auto& neighbor : result.neighbors) {
-            if (!(neighbor.chargeC > 0.0) || !(result.totalCollectedChargeC > 0.0)) {
+            if (!(neighbor.chargeC > 0.0)) {
                 continue;
             }
 
@@ -398,35 +412,123 @@ void LGADChargeSharingRecon::process(const Input& input, const Output& output) c
                                                 static_cast<float>(result.nearestPixelCenterMM[2])};
             }
 
-            const double chargeElectrons = neighbor.chargeC / kElementaryChargeC;
-            const auto rawCharge = static_cast<std::int32_t>(std::clamp(
-                std::llround(chargeElectrons),
-                static_cast<long long>(std::numeric_limits<std::int32_t>::min()),
-                static_cast<long long>(std::numeric_limits<std::int32_t>::max())));
-            const double padEnergy = edep * neighbor.chargeC / result.totalCollectedChargeC;
+            PadContribution contribution{};
+            contribution.cellID = padCellID;
+            contribution.position = padPosition;
+            contribution.timeNs = hit.getTime();
+            contribution.inducedChargeC = neighbor.chargeC;
+            contribution.inducedEnergyGeV = edep * neighbor.fraction;
+            contribution.simHitIndex = static_cast<int>(hitIndex);
+            contributions.push_back(contribution);
+        }
+    }
 
-            auto raw = raw_hits->create(padCellID, rawCharge,
-                                        static_cast<std::int32_t>(hit.getTime() * 1e3));
-            auto rec = rec_hits->create(padCellID, padPosition, posError, hit.getTime(), 0.0f,
-                                        static_cast<float>(padEnergy), 0.0f);
-            rec.setRawHit(raw);
+    // ------------------------------------------------------------------
+    // Pass 2: aggregate contributions into readout channels (sum before
+    // electronics), then apply noise, threshold and digitization once per
+    // channel and emit the raw/reconstructed hits.
+    // ------------------------------------------------------------------
+    const auto channels = aggregateChannels(contributions, m_cfg.integrationWindowNs);
+    const double thresholdChargeC = m_cfg.thresholdElectrons * kElementaryChargeC;
 
+    for (const auto& channel : channels) {
+        double chargeC = channel.chargeC;
+        if (m_cfg.noiseEnabled) {
+            chargeC = m_noise_model.applyNoise(chargeC);
+        }
+        if (!(chargeC > thresholdChargeC)) {
+            continue;
+        }
+
+        const double chargeElectrons = chargeC / kElementaryChargeC;
+        const auto rawCharge = static_cast<std::int32_t>(std::clamp(
+            std::llround(chargeElectrons),
+            static_cast<long long>(std::numeric_limits<std::int32_t>::min()),
+            static_cast<long long>(std::numeric_limits<std::int32_t>::max())));
+
+        auto raw = raw_hits->create(channel.cellID, rawCharge,
+                                    static_cast<std::int32_t>(channel.timeNs * 1e3));
+        auto rec = rec_hits->create(channel.cellID, channel.position, posError,
+                                    static_cast<float>(channel.timeNs), 0.0f,
+                                    static_cast<float>(channel.energyGeV), 0.0f);
+        rec.setRawHit(raw);
+
+        for (const auto& [simHitIndex, weight] : channel.contributors) {
+            const auto simHit = (*sim_hits)[static_cast<std::size_t>(simHitIndex)];
 #if EDM4EIC_BUILD_VERSION >= EDM4EIC_VERSION(8, 7, 0)
             auto link = links->create();
             link.setFrom(raw);
-            link.setTo(hit);
-            link.setWeight(1.0f);
+            link.setTo(simHit);
+            link.setWeight(static_cast<float>(weight));
 #endif
-
             auto assoc = assocs->create();
             assoc.setRawHit(raw);
-            assoc.setSimHit(hit);
-            // Each emitted raw hit currently has exactly one truth contributor.
-            // After channel aggregation is added this must become that
-            // contributor's induced signal divided by the channel total.
-            assoc.setWeight(1.0f);
+            assoc.setSimHit(simHit);
+            assoc.setWeight(static_cast<float>(weight));
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Channel aggregation (pure; unit-tested).
+// ---------------------------------------------------------------------------
+std::vector<LGADChargeSharingRecon::AggregatedChannel>
+LGADChargeSharingRecon::aggregateChannels(const std::vector<PadContribution>& contributions,
+                                          double integrationWindowNs) {
+    // Accumulator carrying the extra running sums that the public channel type
+    // does not need to expose (time anchor, charge-weighted time numerator).
+    struct Bucket {
+        AggregatedChannel channel;
+        double anchorTimeNs{0.0};
+        double chargeTimeSumC{0.0};
+    };
+
+    std::vector<Bucket> buckets;
+    std::unordered_map<std::uint64_t, std::vector<std::size_t>> bucketsByCell;
+
+    for (const auto& c : contributions) {
+        if (!(c.inducedChargeC > 0.0)) {
+            continue;
+        }
+
+        auto& indices = bucketsByCell[c.cellID];
+        Bucket* bucket = nullptr;
+        for (std::size_t idx : indices) {
+            if (std::abs(buckets[idx].anchorTimeNs - c.timeNs) < integrationWindowNs) {
+                bucket = &buckets[idx];
+                break;
+            }
+        }
+        if (bucket == nullptr) {
+            Bucket fresh{};
+            fresh.channel.cellID = c.cellID;
+            fresh.channel.position = c.position;
+            fresh.anchorTimeNs = c.timeNs;
+            indices.push_back(buckets.size());
+            buckets.push_back(fresh);
+            bucket = &buckets.back();
+        }
+
+        bucket->channel.chargeC += c.inducedChargeC;
+        bucket->channel.energyGeV += c.inducedEnergyGeV;
+        bucket->chargeTimeSumC += c.inducedChargeC * c.timeNs;
+        bucket->channel.contributors.emplace_back(c.simHitIndex, c.inducedChargeC);
+    }
+
+    std::vector<AggregatedChannel> channels;
+    channels.reserve(buckets.size());
+    for (auto& bucket : buckets) {
+        AggregatedChannel channel = std::move(bucket.channel);
+        channel.timeNs =
+            (channel.chargeC > 0.0) ? bucket.chargeTimeSumC / channel.chargeC : bucket.anchorTimeNs;
+        // Convert stored induced charge into a normalized truth weight.
+        for (auto& [simHitIndex, weight] : channel.contributors) {
+            weight = (channel.chargeC > 0.0) ? weight / channel.chargeC : 0.0;
+        }
+        channels.push_back(std::move(channel));
+    }
+
+    return channels;
 }
 
 // ---------------------------------------------------------------------------
@@ -491,13 +593,11 @@ LGADChargeSharingRecon::processSingleHitImpl(const SingleHitInput& input) const 
     const double totalChargeElectrons = numElectrons * m_cfg.amplificationFactor;
     const double totalChargeCoulombs = totalChargeElectrons * kElementaryChargeC;
 
+    // Induced (noiseless) charge per pad. Electronic noise is applied later,
+    // once per aggregated channel, in process().
     for (auto& pixel : neighborhood.pixels) {
         if (pixel.inBounds) {
-            double chargeC = pixel.fraction * totalChargeCoulombs;
-            if (m_cfg.noiseEnabled) {
-                chargeC = m_noise_model.applyNoise(chargeC);
-            }
-            pixel.charge = chargeC;
+            pixel.charge = pixel.fraction * totalChargeCoulombs;
         }
     }
 

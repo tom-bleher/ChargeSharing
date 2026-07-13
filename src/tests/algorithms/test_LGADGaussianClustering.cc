@@ -127,12 +127,11 @@ GaussianPadGrid makeGaussianGrid(double cx, double cy, double muX, double muY, d
 
 } // namespace
 
-// KNOWN DEFECT: the rotated-2D Minuit fit reconstructs a peak biased toward
-// the grid center on this input (reconX ~ -0.04 vs truth -0.12). Kept visible
-// as [!mayfail] until the estimator rework (model-fraction chi2/LUT primary,
-// Gaussian as comparator) replaces the current fit.
-TEST_CASE("reconstructClusterPosition: Gaussian2D recovers peak of wide grid",
-          "[lgad][clustering][gauss2d][!mayfail]") {
+// With a well-sampled cluster the isotropic width can be floated: the fit
+// recovers the peak without being told the charge-cloud width (seed deliberately
+// left at the geometric default).
+TEST_CASE("reconstructClusterPosition: Gaussian2D recovers peak with floated width",
+          "[lgad][clustering][gauss2d]") {
     const double pitch = 0.5;
     const double muX = -0.12;
     const double muY = 0.07;
@@ -141,19 +140,43 @@ TEST_CASE("reconstructClusterPosition: Gaussian2D recovers peak of wide grid",
     auto g = makeGaussianGrid(/*cx=*/0.0, /*cy=*/0.0, muX, muY, sigma, pitch);
 
     auto result = LGADGaussianClustering::reconstructClusterPosition(
-        g.x, g.y, g.q, 0.0, 0.0, g.maxQ, pitch, pitch, 5.0);
+        g.x, g.y, g.q, 0.0, 0.0, g.maxQ, pitch, pitch, 5.0, /*fitSigmaMM=*/0.0,
+        /*fitFloatSigma=*/true);
 
+    CHECK(result.fitConverged);
     CHECK_THAT(result.reconX, WithinAbs(muX, 0.1 * pitch));
     CHECK_THAT(result.reconY, WithinAbs(muY, 0.1 * pitch));
     CHECK(result.sigma2X > 0.0);
     CHECK(result.sigma2Y > 0.0);
 }
 
-// KNOWN DEFECT: on flat (peakless) input the Minuit fit reports success with a
-// spurious offset instead of triggering the centroid fallback. Kept visible as
-// [!mayfail] until the estimator rework adds an explicit fit-quality gate.
+// The same cluster reconstructs correctly with a strictly fixed, calibrated
+// width (float disabled). A mismatched fixed width would bias the peak, so this
+// pins the calibration mode.
+TEST_CASE("reconstructClusterPosition: Gaussian2D recovers peak with fixed calibrated width",
+          "[lgad][clustering][gauss2d]") {
+    const double pitch = 0.5;
+    const double muX = -0.12;
+    const double muY = 0.07;
+    const double sigma = 0.18;
+
+    auto g = makeGaussianGrid(/*cx=*/0.0, /*cy=*/0.0, muX, muY, sigma, pitch);
+
+    auto result = LGADGaussianClustering::reconstructClusterPosition(
+        g.x, g.y, g.q, 0.0, 0.0, g.maxQ, pitch, pitch, 5.0, /*fitSigmaMM=*/sigma,
+        /*fitFloatSigma=*/false);
+
+    CHECK(result.fitConverged);
+    CHECK_THAT(result.reconX, WithinAbs(muX, 0.1 * pitch));
+    CHECK_THAT(result.reconY, WithinAbs(muY, 0.1 * pitch));
+    CHECK(result.sigma2X > 0.0);
+    CHECK(result.sigma2Y > 0.0);
+}
+
+// A peakless (flat) cluster has no localizable maximum: the peak-significance
+// gate rejects the fit so the caller falls back to the charge-weighted centroid.
 TEST_CASE("reconstructClusterPosition: Gaussian2D falls back to centroid on unfittable input",
-          "[lgad][clustering][gauss2d][fallback][!mayfail]") {
+          "[lgad][clustering][gauss2d][fallback]") {
     const double pitch = 0.5;
     // All-equal charges with no distinguishable peak -> fit should fail and
     // centroid fallback should give the geometric mean of pad centers.
@@ -165,6 +188,7 @@ TEST_CASE("reconstructClusterPosition: Gaussian2D falls back to centroid on unfi
         x, y, q, 0.0, 0.0, 1.0, pitch, pitch, 5.0);
 
     // Uniform weights -> centroid is mean of positions which is (0, 0).
+    CHECK_FALSE(result.fitConverged);
     CHECK_THAT(result.reconX, WithinAbs(0.0, 1e-6));
     CHECK_THAT(result.reconY, WithinAbs(0.0, 1e-6));
     CHECK(result.sigma2X > 0.0);

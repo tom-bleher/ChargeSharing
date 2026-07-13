@@ -15,6 +15,7 @@
 #include <edm4eic/RawTrackerHitCollection.h>
 #include <edm4eic/TrackerHitCollection.h>
 #include <edm4hep/SimTrackerHitCollection.h>
+#include <edm4hep/Vector3f.h>
 
 #if EDM4EIC_BUILD_VERSION >= EDM4EIC_VERSION(8, 7, 0)
 #include <edm4eic/MCRecoTrackerHitLinkCollection.h>
@@ -117,6 +118,38 @@ public:
         int numActiveNeighbors{0};
         int neighborhoodRadius{0};
     };
+
+    /// One pad's induced (noiseless) charge from a single SimTrackerHit, before
+    /// any per-channel aggregation. Produced during the first pass of process().
+    struct PadContribution {
+        std::uint64_t cellID{0};
+        edm4hep::Vector3f position{};
+        double timeNs{0.0};
+        double inducedChargeC{0.0};
+        double inducedEnergyGeV{0.0};
+        int simHitIndex{-1};
+    };
+
+    /// One readout channel after summing every induced contribution that lands
+    /// on the same pad within the integration window. Electronics (noise,
+    /// threshold, digitization) are applied to this aggregate exactly once.
+    struct AggregatedChannel {
+        std::uint64_t cellID{0};
+        edm4hep::Vector3f position{};
+        double timeNs{0.0};    ///< Charge-weighted mean time (ns)
+        double chargeC{0.0};   ///< Summed induced charge, pre-electronics (C)
+        double energyGeV{0.0}; ///< Summed induced energy (GeV)
+        /// (simHitIndex, weight) with weight = this contributor's induced charge
+        /// divided by the channel total. Weights over one channel sum to 1.
+        std::vector<std::pair<int, double>> contributors;
+    };
+
+    /// Sum induced pad contributions into readout channels. Contributions on the
+    /// same cellID whose times fall within integrationWindowNs are merged; those
+    /// further apart form separate channels. Pure function (no DD4hep state) so
+    /// the aggregate-before-electronics ordering can be unit-tested directly.
+    static std::vector<AggregatedChannel>
+    aggregateChannels(const std::vector<PadContribution>& contributions, double integrationWindowNs);
 
     /// Process a single SimTrackerHit (used directly by unit tests).
     SingleHitResult processSingleHit(const SingleHitInput& input) const;

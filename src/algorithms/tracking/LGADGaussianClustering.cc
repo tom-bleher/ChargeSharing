@@ -238,7 +238,8 @@ void LGADGaussianClustering::reconstructCluster(const Output& output,
 
     const auto clusterPos = reconstructClusterPosition(xPos, yPos, charges, centerX, centerY,
                                                        maxEdep, pitchX, pitchY,
-                                                       m_cfg.fitErrorPercent);
+                                                       m_cfg.fitErrorPercent, m_cfg.fitSigmaMM,
+                                                       m_cfg.fitFloatSigma);
     double reconX = clusterPos.reconX;
     double reconY = clusterPos.reconY;
     double sigma2X = clusterPos.sigma2X;
@@ -284,7 +285,7 @@ void LGADGaussianClustering::reconstructCluster(const Output& output,
 LGADGaussianClustering::ClusterPosition LGADGaussianClustering::reconstructClusterPosition(
     const std::vector<double>& xPos, const std::vector<double>& yPos,
     const std::vector<double>& charges, double centerX, double centerY, double maxEdep,
-    double pitchX, double pitchY, double fitErrorPercent) {
+    double pitchX, double pitchY, double fitErrorPercent, double fitSigmaMM, bool fitFloatSigma) {
     ClusterPosition out{};
 
     double totalEdep = 0.0;
@@ -298,9 +299,6 @@ LGADGaussianClustering::ClusterPosition LGADGaussianClustering::reconstructClust
         out.sigma2Y = pitchY * pitchY / 12.0;
         return out;
     }
-
-    const double padSizeX = pitchX;
-    const double padSizeY = pitchY;
 
     auto centroid = [&](double& rx, double& ry) {
         rx = 0.0;
@@ -327,11 +325,16 @@ LGADGaussianClustering::ClusterPosition LGADGaussianClustering::reconstructClust
     cfg.muXHi = centerX + pitchX;
     cfg.muYLo = centerY - pitchY;
     cfg.muYHi = centerY + pitchY;
-    cfg.sigmaLo = std::min(padSizeX, padSizeY);
-    cfg.sigmaHi = std::max(pitchX, pitchY) * 3;
+    // Bounds for a floated width: the charge-cloud sigma can sit well below the
+    // pitch, so allow down to 0.1*pitch and up to ~1.5*pitch.
+    cfg.sigmaLo = 0.1 * spacing;
+    cfg.sigmaHi = 1.5 * std::max(pitchX, pitchY);
     cfg.qMax = maxEdep;
     cfg.pixelSpacing = spacing;
     cfg.errorPercent = fitErrorPercent;
+    // Calibration width (seed when floated); 0 lets the fitter fall back to 0.5*pitch.
+    cfg.sigmaFixed = fitSigmaMM;
+    cfg.floatSigma = fitFloatSigma;
 
     auto result = cfit::fitGaussian2D(xPos, yPos, charges, cfg);
     if (result.converged) {

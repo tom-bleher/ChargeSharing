@@ -242,6 +242,20 @@ inline double gauss2DPlusB(double* xy, double* p) {
     return A * std::exp(-0.5 * (u * u + v * v)) + B;
 }
 
+/// Isotropic 2D Gaussian, no baseline or rotation: A * exp(-0.5 * r^2 / sigma^2)
+/// with r^2 = (x-muX)^2 + (y-muY)^2. Used as the constrained position surrogate;
+/// sigma is either held at a calibration value or floated as a single parameter.
+inline double gauss2DIso(double* xy, double* p) {
+    const double A = p[0];
+    const double muX = p[1];
+    const double muY = p[2];
+    const double sigma = p[3];
+    const double dx = xy[0] - muX;
+    const double dy = xy[1] - muY;
+    const double r2 = dx * dx + dy * dy;
+    return A * std::exp(-0.5 * r2 / (sigma * sigma));
+}
+
 // ============================================================================
 // Utility Functions (small, inline)
 // ============================================================================
@@ -352,19 +366,27 @@ GaussFit1DResult fitGaussian1D(const std::vector<double>& positions, const std::
 struct GaussFit2DConfig {
     double muXLo, muXHi;     ///< Bounds for mu_x
     double muYLo, muYHi;     ///< Bounds for mu_y
-    double sigmaLo, sigmaHi; ///< Bounds for sigma
+    double sigmaLo, sigmaHi; ///< Bounds for sigma when it is floated
     double qMax;             ///< Maximum charge value
     double pixelSpacing;     ///< Pixel pitch (mm)
+    double sigmaFixed{0.0};  ///< Calibrated Gaussian width (mm); <=0 -> 0.5*pixelSpacing. Held fixed unless floatSigma.
+    bool floatSigma{false};  ///< Float a single isotropic sigma when the cluster has enough pads; else hold it fixed.
     double errorPercent{constants::kDefaultErrorPercent}; ///< Error as % of max (fallback when noise model inactive)
     DistanceWeightedErrorConfig distanceErrorConfig{}; ///< Distance-weighted error config
     double gainSigma{0.0};          ///< Per-pixel multiplicative gain sigma (0 = use errorPercent instead)
     double noiseElectronSigma{0.0}; ///< Additive electronic noise floor in charge units (Coulombs)
 };
 
-/// @brief Fit a rotated 2D Gaussian + baseline to a pixel cluster charge map to extract (X, Y) hit position.
+/// @brief Fit a constrained isotropic 2D Gaussian to a pixel cluster charge map to extract (X, Y) hit position.
 ///
-/// Uses ROOT's Minuit2 (Fumili2, falling back to Migrad) to minimize chi-square.
-/// The Gaussian includes a rotation angle theta. Requires at least 6 pixels (7 parameters).
+/// This is a position surrogate, not a sensor-response model: the baseline and
+/// rotation are pinned to zero and the width is isotropic (sigmaX == sigmaY), so
+/// at most four parameters (A, muX, muY, sigma) are free. The width is held at
+/// config.sigmaFixed unless config.floatSigma is set AND the cluster has enough
+/// pads to constrain it (>= 4 free parameters + 1). Uses ROOT's Minuit2 (Fumili2,
+/// falling back to Migrad). Requires at least 3 pixels; clusters with no
+/// significant peak return converged=false so the caller can fall back to the
+/// centroid.
 ///
 /// @param xPositions X coordinates of pixel centers (mm).
 /// @param yPositions Y coordinates of pixel centers (mm).

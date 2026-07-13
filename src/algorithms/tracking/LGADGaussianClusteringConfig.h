@@ -21,6 +21,15 @@ struct LGADGaussianClusteringConfig {
 
     /// Fit uncertainty as a percentage of the cluster's max charge.
     double fitErrorPercent{5.0};
+
+    /// Gaussian surrogate width (mm) used as the fixed value, or as the seed when
+    /// the width is floated. 0 -> derive geometrically as half the pad pitch.
+    double fitSigmaMM{0.0};
+
+    /// Float a single isotropic width in the 2D fit when the cluster has enough
+    /// pads to constrain it; otherwise hold it at fitSigmaMM. Disable for
+    /// calibration studies that want a strictly fixed width.
+    bool fitFloatSigma{true};
 };
 
 } // namespace eicrecon

@@ -55,12 +55,9 @@ ddsim --compactFile "$COMPACT" \
 echo ""
 echo "=== Step 3: EICrecon (B0TRK plugin + benchmark monitor) ==="
 export EICrecon_MY="$PLUGIN_DIR"
-OUTPUT_COLLECTIONS="EventHeader,B0TrackerHits,B0TrackerChargeSharingRawHits,B0TrackerChargeSharingHits,B0TrackerChargeSharingHitAssociations,B0TrackerClusterHits"
+OUTPUT_COLLECTIONS="EventHeader,MCParticles,B0TrackerHits,B0TrackerChargeSharingRawHits,B0TrackerChargeSharingHits,B0TrackerChargeSharingHitAssociations,B0TrackerClusterHits,B0TrackerCSCKFTruthSeededTrajectories,B0TrackerCSCKFTruthSeededTrackParameters,B0TrackerCSCKFTruthSeededTracks,B0TrackerCSCKFTruthSeededTrackAssociations"
 if [ "${LGAD_ENABLE_MODERN_LINKS:-1}" = "1" ]; then
-    OUTPUT_COLLECTIONS="${OUTPUT_COLLECTIONS},B0TrackerChargeSharingRawHitLinks"
-fi
-if [ "${LGAD_ENABLE_DATA_TRACKING:-0}" = "1" ]; then
-    OUTPUT_COLLECTIONS="${OUTPUT_COLLECTIONS},B0TrackerCSSeeds,B0TrackerCSSeedParameters,B0TrackerCSCKFTracks,B0TrackerCSCKFTrackAssociations"
+    OUTPUT_COLLECTIONS="${OUTPUT_COLLECTIONS},B0TrackerChargeSharingRawHitLinks,B0TrackerCSCKFTruthSeededTrackLinks"
 fi
 eicrecon \
     -Pplugins=B0TRK_lgad_chargesharing,LGAD_chargesharing_benchmark \

@@ -63,6 +63,10 @@ private:
                                        "Enable electronic noise injection"};
     ParameterRef<double> m_noise_electrons{this, "noiseElectronCount", config().noiseElectronCount,
                                            "Electronic noise RMS (electrons)"};
+    ParameterRef<double> m_integration_window{this, "integrationWindowNs", config().integrationWindowNs,
+                                              "Charge-integration window for per-pad channel merging (ns)"};
+    ParameterRef<double> m_threshold_electrons{this, "thresholdElectrons", config().thresholdElectrons,
+                                               "Per-channel readout threshold (electrons)"};
 
 public:
     void Configure() {

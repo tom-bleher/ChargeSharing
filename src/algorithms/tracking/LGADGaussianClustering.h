@@ -64,7 +64,8 @@ public:
     static ClusterPosition reconstructClusterPosition(
         const std::vector<double>& xPos, const std::vector<double>& yPos,
         const std::vector<double>& charges, double centerX, double centerY,
-        double maxEdep, double pitchX, double pitchY, double fitErrorPercent);
+        double maxEdep, double pitchX, double pitchY, double fitErrorPercent,
+        double fitSigmaMM = 0.0, bool fitFloatSigma = true);
 
     /// Disjoint-set data structure used to merge neighbour hits into clusters.
     ///
