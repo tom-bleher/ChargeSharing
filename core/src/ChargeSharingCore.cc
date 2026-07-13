@@ -75,10 +75,6 @@ NeighborhoodResult calculateNeighborhood(double hitX, double hitY, int centerI, 
             }
 
             pixel.inBounds = true;
-            pixel.globalIndex =
-                (config.numPixelsY > 0)
-                    ? (globalI - config.minIndexX) * config.numPixelsY + (globalJ - config.minIndexY)
-                    : globalI * gridDim + globalJ;
             pixel.centerX = centerX + di * pitchX;
             pixel.centerY = centerY + dj * pitchY;
 

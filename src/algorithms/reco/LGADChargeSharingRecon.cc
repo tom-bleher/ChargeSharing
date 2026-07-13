@@ -7,6 +7,7 @@
 #include <DD4hep/Alignments.h>
 #include <DD4hep/Readout.h>
 #include <DD4hep/Segmentations.h>
+#include <DD4hep/Objects.h>
 #include <DD4hep/Volumes.h>
 #include <DDRec/CellIDPositionConverter.h>
 #include <DDSegmentation/BitFieldCoder.h>
@@ -23,6 +24,7 @@
 #include <cstdint>
 #include <exception>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -176,27 +178,11 @@ void LGADChargeSharingRecon::init() {
                     m_geom.fieldNameY = segImplXZ->fieldNameZ();
                 }
 
-                if (m_decoder != nullptr) {
-                    const auto& fx = (*m_decoder)[m_geom.fieldNameX];
-                    const auto& fy = (*m_decoder)[m_geom.fieldNameY];
-                    m_geom.minIndexX = fx.minValue();
-                    m_geom.maxIndexX = fx.maxValue();
-                    m_geom.minIndexY = fy.minValue();
-                    m_geom.maxIndexY = fy.maxValue();
-                    if (fx.maxValue() >= fx.minValue() && fy.maxValue() >= fy.minValue() &&
-                        fx.maxValue() - fx.minValue() == fy.maxValue() - fy.minValue()) {
-                        m_geom.pixelsPerSide = fx.maxValue() - fx.minValue() + 1;
-                    }
-                } else {
-                    warning("Segmentation for readout '{}' lacks a BitField decoder; neighbour bounds unavailable",
-                            m_cfg.readout);
-                }
-
                 info("Using DD4hep {} segmentation for readout '{}': pitch=({}, {}) mm, "
-                     "offset=({}, {}) mm, cells/side={}",
+                     "offset=({}, {}) mm",
                      m_geom.useXZCoordinates ? "CartesianGridXZ" : "CartesianGridXY", m_cfg.readout,
                      m_geom.pixelSpacingXMM, m_geom.pixelSpacingYMM, m_geom.gridOffsetXMM,
-                     m_geom.gridOffsetYMM, m_geom.pixelsPerSide);
+                     m_geom.gridOffsetYMM);
             }
         }
 
@@ -248,9 +234,26 @@ void LGADChargeSharingRecon::init() {
         warning("Failed to derive segmentation for readout '{}': {}", m_cfg.readout, ex.what());
     }
 
-    info("Final geometry: pitch=({}, {}) mm, pad=({}, {}) mm, Si thickness={} mm, pixels/side={}",
+    info("Final geometry: pitch=({}, {}) mm, pad=({}, {}) mm, Si thickness={} mm",
          m_geom.pixelSpacingXMM, m_geom.pixelSpacingYMM, m_geom.pixelSizeXMM, m_geom.pixelSizeYMM,
-         m_geom.detectorThicknessMM, m_geom.pixelsPerSide);
+         m_geom.detectorThicknessMM);
+}
+
+std::pair<int, int> LGADChargeSharingRecon::indexRangeForBox(double halfExtentMM,
+                                                              double pitchMM,
+                                                              double offsetMM) {
+    if (!(std::isfinite(halfExtentMM) && halfExtentMM > 0.0 && std::isfinite(pitchMM) &&
+          pitchMM > 0.0 && std::isfinite(offsetMM))) {
+        throw std::invalid_argument("Invalid sensor extent, pitch, or offset");
+    }
+
+    const double lower = std::ceil((-halfExtentMM - offsetMM) / pitchMM);
+    const double upper = std::floor((halfExtentMM - offsetMM) / pitchMM);
+    if (lower < static_cast<double>(std::numeric_limits<int>::min()) ||
+        upper > static_cast<double>(std::numeric_limits<int>::max()) || lower > upper) {
+        throw std::out_of_range("Sensor extent does not define a valid integer cell range");
+    }
+    return {static_cast<int>(lower), static_cast<int>(upper)};
 }
 
 // ---------------------------------------------------------------------------
@@ -258,7 +261,11 @@ void LGADChargeSharingRecon::init() {
 // ---------------------------------------------------------------------------
 void LGADChargeSharingRecon::process(const Input& input, const Output& output) const {
     const auto [sim_hits] = input;
+#if EDM4EIC_BUILD_VERSION >= EDM4EIC_VERSION(8, 7, 0)
+    auto [raw_hits, rec_hits, links, assocs] = output;
+#else
     auto [raw_hits, rec_hits, assocs] = output;
+#endif
 
     const bool useXZ = m_geom.useXZCoordinates;
     const double pitchX = m_geom.pixelSpacingXMM;
@@ -287,6 +294,24 @@ void LGADChargeSharingRecon::process(const Input& input, const Output& output) c
         }
         const auto localPos = context->element.nominal().worldToLocal(
             dd4hep::Position(pos.x * dd4hep::mm, pos.y * dd4hep::mm, pos.z * dd4hep::mm));
+
+        try {
+            dd4hep::Box sensorBox = context->element.solid();
+            const auto xRange = indexRangeForBox(sensorBox->GetDX() / dd4hep::mm,
+                                                  m_geom.pixelSpacingXMM,
+                                                  m_geom.gridOffsetXMM);
+            const double secondHalfExtent =
+                (useXZ ? sensorBox->GetDZ() : sensorBox->GetDY()) / dd4hep::mm;
+            const auto yRange = indexRangeForBox(secondHalfExtent, m_geom.pixelSpacingYMM,
+                                                  m_geom.gridOffsetYMM);
+            singleInput.indexBounds = SingleHitInput::IndexBounds{
+                xRange.first, xRange.second, yRange.first, yRange.second};
+        } catch (const std::exception& ex) {
+            error("Sensitive DetElement for hit {:#018x} is not a supported Box: {}; dropping hit",
+                  hit.getCellID(), ex.what());
+            continue;
+        }
+
         std::uint64_t centerCellID = hit.getCellID();
         if (m_segmentation != nullptr) {
             centerCellID = m_segmentation->cellID(localPos, dd4hep::Position{}, centerCellID);
@@ -386,10 +411,20 @@ void LGADChargeSharingRecon::process(const Input& input, const Output& output) c
                                         static_cast<float>(padEnergy), 0.0f);
             rec.setRawHit(raw);
 
+#if EDM4EIC_BUILD_VERSION >= EDM4EIC_VERSION(8, 7, 0)
+            auto link = links->create();
+            link.setFrom(raw);
+            link.setTo(hit);
+            link.setWeight(1.0f);
+#endif
+
             auto assoc = assocs->create();
             assoc.setRawHit(raw);
             assoc.setSimHit(hit);
-            assoc.setWeight(static_cast<float>(neighbor.fraction));
+            // Each emitted raw hit currently has exactly one truth contributor.
+            // After channel aggregation is added this must become that
+            // contributor's induced signal divided by the channel total.
+            assoc.setWeight(1.0f);
         }
     }
 }
@@ -435,10 +470,18 @@ LGADChargeSharingRecon::processSingleHitImpl(const SingleHitInput& input) const 
     neighborCfg.pixelSpacingMM = m_geom.pixelSpacingXMM;
     neighborCfg.pixelSpacingYMM = m_geom.pixelSpacingYMM;
     neighborCfg.d0Micron = m_cfg.d0Micron;
-    neighborCfg.numPixelsX = m_geom.pixelsPerSide;
-    neighborCfg.numPixelsY = m_geom.pixelsPerSide;
-    neighborCfg.minIndexX = m_geom.hasBoundsX() ? m_geom.minIndexX : 0;
-    neighborCfg.minIndexY = m_geom.hasBoundsY() ? m_geom.minIndexY : 0;
+    if (input.indexBounds.has_value()) {
+        const auto& bounds = *input.indexBounds;
+        neighborCfg.minIndexX = bounds.minX;
+        neighborCfg.minIndexY = bounds.minY;
+        neighborCfg.numPixelsX = bounds.maxX - bounds.minX + 1;
+        neighborCfg.numPixelsY = bounds.maxY - bounds.minY + 1;
+    } else {
+        neighborCfg.numPixelsX = m_geom.numPixelsX;
+        neighborCfg.numPixelsY = m_geom.numPixelsY;
+        neighborCfg.minIndexX = m_geom.hasBoundsX() ? m_geom.minIndexX : 0;
+        neighborCfg.minIndexY = m_geom.hasBoundsY() ? m_geom.minIndexY : 0;
+    }
 
     core::NeighborhoodResult neighborhood = core::calculateNeighborhood(
         hitX, hitY, nearest.indexI, nearest.indexJ, nearest.center[0], nearest.center[1], neighborCfg);
@@ -469,7 +512,6 @@ LGADChargeSharingRecon::processSingleHitImpl(const SingleHitInput& input) const 
         n.alphaRad = pixel.alpha;
         n.pixelXMM = pixel.centerX;
         n.pixelYMM = pixel.centerY;
-        n.pixelId = pixel.globalIndex;
         n.di = pixel.di;
         n.dj = pixel.dj;
         result.neighbors.push_back(n);
@@ -495,15 +537,12 @@ LGADChargeSharingRecon::findNearestPixelFallback(const std::array<double, 3>& po
     int i = positionToIndex(positionMM[0], m_geom.pixelSpacingXMM, m_geom.gridOffsetXMM);
     int j = positionToIndex(positionMM[1], m_geom.pixelSpacingYMM, m_geom.gridOffsetYMM);
 
-    const int defaultMin = 0;
-    const int defaultMax = std::max(0, m_geom.pixelsPerSide - 1);
-    const int minI = m_geom.hasBoundsX() ? m_geom.minIndexX : defaultMin;
-    const int maxI = m_geom.hasBoundsX() ? m_geom.maxIndexX : defaultMax;
-    const int minJ = m_geom.hasBoundsY() ? m_geom.minIndexY : defaultMin;
-    const int maxJ = m_geom.hasBoundsY() ? m_geom.maxIndexY : defaultMax;
-
-    i = std::clamp(i, minI, maxI);
-    j = std::clamp(j, minJ, maxJ);
+    if (m_geom.hasBoundsX()) {
+        i = std::clamp(i, m_geom.minIndexX, m_geom.maxIndexX);
+    }
+    if (m_geom.hasBoundsY()) {
+        j = std::clamp(j, m_geom.minIndexY, m_geom.maxIndexY);
+    }
     return pixelLocationFromIndices(i, j);
 }
 

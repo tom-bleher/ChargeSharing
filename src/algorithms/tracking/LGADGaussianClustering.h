@@ -9,7 +9,7 @@
 #include <DD4hep/Segmentations.h>
 #include <DDRec/CellIDPositionConverter.h>
 #include <DDSegmentation/BitFieldCoder.h>
-#include <DDSegmentation/CartesianGridXY.h>
+#include <DDSegmentation/Segmentation.h>
 #include <algorithms/algorithm.h>
 #include <edm4eic/Measurement2DCollection.h>
 #include <edm4eic/TrackerHitCollection.h>
@@ -81,7 +81,7 @@ public:
 
 private:
     void reconstructCluster(const Output& output, const std::vector<edm4eic::TrackerHit>& hits) const;
-    const dd4hep::DDSegmentation::CartesianGridXY*
+    const dd4hep::DDSegmentation::Segmentation*
     getLocalSegmentation(const dd4hep::rec::CellID& cellID) const;
 
     const dd4hep::rec::CellIDPositionConverter* m_converter = nullptr;
@@ -91,7 +91,7 @@ private:
     std::shared_ptr<const ActsGeometryProvider> m_acts_context;
 
     mutable std::unordered_map<const dd4hep::DetElement*,
-                               const dd4hep::DDSegmentation::CartesianGridXY*>
+                               const dd4hep::DDSegmentation::Segmentation*>
         m_segmentation_map;
 };
 

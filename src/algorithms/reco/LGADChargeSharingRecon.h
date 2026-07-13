@@ -10,10 +10,15 @@
 #include "chargesharing/core/NoiseModel.hh"
 #include "LGADChargeSharingReconConfig.h"
 
+#include <edm4eic/EDM4eicVersion.h>
 #include <edm4eic/MCRecoTrackerHitAssociationCollection.h>
 #include <edm4eic/RawTrackerHitCollection.h>
 #include <edm4eic/TrackerHitCollection.h>
 #include <edm4hep/SimTrackerHitCollection.h>
+
+#if EDM4EIC_BUILD_VERSION >= EDM4EIC_VERSION(8, 7, 0)
+#include <edm4eic/MCRecoTrackerHitLinkCollection.h>
+#endif
 
 #include <array>
 #include <cstdint>
@@ -42,6 +47,9 @@ namespace core = ::chargesharing::core;
 using LGADChargeSharingReconAlgorithm = algorithms::Algorithm<
     algorithms::Input<edm4hep::SimTrackerHitCollection>,
     algorithms::Output<edm4eic::RawTrackerHitCollection, edm4eic::TrackerHitCollection,
+#if EDM4EIC_BUILD_VERSION >= EDM4EIC_VERSION(8, 7, 0)
+                       edm4eic::MCRecoTrackerHitLinkCollection,
+#endif
                        edm4eic::MCRecoTrackerHitAssociationCollection>>;
 
 /// AC-LGAD charge-sharing digitization: SimTrackerHit -> per-pad TrackerHits.
@@ -61,7 +69,11 @@ public:
         : LGADChargeSharingReconAlgorithm{
               name,
               {"inputSimTrackerHits"},
-              {"outputRawTrackerHits", "outputTrackerHits", "outputHitAssociations"},
+              {"outputRawTrackerHits", "outputTrackerHits",
+#if EDM4EIC_BUILD_VERSION >= EDM4EIC_VERSION(8, 7, 0)
+               "outputHitLinks",
+#endif
+               "outputHitAssociations"},
               "AC-LGAD per-pad charge-sharing digitization."} {}
 
     void init() final;
@@ -70,9 +82,17 @@ public:
     // ----- helper types kept public for tests -----
 
     struct SingleHitInput {
+        struct IndexBounds {
+            int minX{0};
+            int maxX{-1};
+            int minY{0};
+            int maxY{-1};
+        };
+
         std::array<double, 3> hitPositionMM{};
         std::optional<std::array<double, 3>> pixelHintMM{};
         std::optional<std::pair<int, int>> pixelIndexHint{};
+        std::optional<IndexBounds> indexBounds{};
         double energyDepositGeV{0.0};
         std::uint64_t cellID{0};
     };
@@ -84,7 +104,6 @@ public:
         double alphaRad{0.0};
         double pixelXMM{0.0};
         double pixelYMM{0.0};
-        int pixelId{-1};
         int di{0};
         int dj{0};
     };
@@ -102,6 +121,11 @@ public:
     /// Process a single SimTrackerHit (used directly by unit tests).
     SingleHitResult processSingleHit(const SingleHitInput& input) const;
 
+    /// Return the inclusive segmentation-index range whose cell centers lie
+    /// inside a centered box half-extent.
+    static std::pair<int, int> indexRangeForBox(double halfExtentMM, double pitchMM,
+                                                 double offsetMM);
+
     /// Internal geometry state derived in init(). Exposed for tests that
     /// want to bypass DD4hep and drive the algorithm on a synthetic pad grid.
     struct Geometry {
@@ -114,7 +138,8 @@ public:
         double detectorThicknessMM{0.05};
         double pixelThicknessMM{0.02};
         double detectorZCenterMM{-10.0};
-        int pixelsPerSide{0};
+        int numPixelsX{0};
+        int numPixelsY{0};
         bool useXZCoordinates{false};
         std::string fieldNameX{"x"};
         std::string fieldNameY{"y"};

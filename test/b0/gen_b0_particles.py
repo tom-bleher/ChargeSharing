@@ -23,8 +23,8 @@ import pyhepmc
 PROTON_MASS = 0.938272    # GeV
 PION_MASS = 0.13957039    # GeV
 
-# EIC crossing angle: ion beam tilted by ~25 mrad in x-z plane
-ION_CROSSING_ANGLE = 0.025  # rad
+# ePIC ionCrossingAngle: ion beam tilted by -25 mrad in the x-z plane
+ION_CROSSING_ANGLE = -0.025  # rad
 
 # B0 tracker geometry
 B0_Z = 6300.0       # mm, center of B0 tracker

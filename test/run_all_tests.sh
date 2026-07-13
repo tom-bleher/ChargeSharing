@@ -32,8 +32,8 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PLUGIN_DIR="${REPO_ROOT}/install"
-BUILD_DIR="${REPO_ROOT}/build"
+PLUGIN_DIR="${LGAD_PLUGIN_DIR:-${REPO_ROOT}/install}"
+BUILD_DIR="${LGAD_BUILD_DIR:-${REPO_ROOT}/build}"
 BENCH_DIR="${REPO_ROOT}/src/benchmarks/lgad_chargesharing"
 
 echo "============================================"

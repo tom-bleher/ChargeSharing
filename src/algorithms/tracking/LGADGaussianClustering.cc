@@ -7,7 +7,6 @@
 
 #include <DD4hep/Detector.h>
 #include <DDRec/CellIDPositionConverter.h>
-#include <DDSegmentation/CartesianGridXY.h>
 #include <DDSegmentation/MultiSegmentation.h>
 
 #include <algorithms/geo.h>
@@ -60,10 +59,10 @@ void LGADGaussianClustering::UnionFind::merge(int id1, int id2) {
 }
 
 // ============================================================================
-// MultiSegmentation resolution (matches LGADHitClustering / SiliconChargeSharing)
+// MultiSegmentation resolution
 // ============================================================================
 
-const dd4hep::DDSegmentation::CartesianGridXY*
+const dd4hep::DDSegmentation::Segmentation*
 LGADGaussianClustering::getLocalSegmentation(const dd4hep::rec::CellID& cellID) const {
     auto segmentation_type = m_seg.type();
     const dd4hep::DDSegmentation::Segmentation* segmentation = m_seg.segmentation();
@@ -73,12 +72,11 @@ LGADGaussianClustering::getLocalSegmentation(const dd4hep::rec::CellID& cellID) 
         segmentation = &multi->subsegmentation(cellID);
         segmentation_type = segmentation->type();
     }
-    const auto* grid = dynamic_cast<const dd4hep::DDSegmentation::CartesianGridXY*>(segmentation);
-    if (!grid) {
-        throw std::runtime_error(
-            "LGADGaussianClustering: segmentation is not CartesianGridXY");
+    if (segmentation_type != "CartesianGridXY" && segmentation_type != "CartesianGridXZ") {
+        throw std::runtime_error("LGADGaussianClustering: segmentation is neither "
+                                 "CartesianGridXY nor CartesianGridXZ");
     }
-    return grid;
+    return segmentation;
 }
 
 // ============================================================================
@@ -229,8 +227,14 @@ void LGADGaussianClustering::reconstructCluster(const Output& output,
         return;
 
     const auto* seg = getLocalSegmentation(maxCellID);
-    const double pitchX = seg->gridSizeX() / dd4hep::mm;
-    const double pitchY = seg->gridSizeY() / dd4hep::mm;
+    const auto cellDimensions = seg->cellDimensions(maxCellID);
+    if (cellDimensions.size() < 2) {
+        error("Segmentation for cellID {:#018x} returned fewer than two cell dimensions",
+              maxCellID);
+        return;
+    }
+    const double pitchX = cellDimensions[0] / dd4hep::mm;
+    const double pitchY = cellDimensions[1] / dd4hep::mm;
 
     const auto clusterPos = reconstructClusterPosition(xPos, yPos, charges, centerX, centerY,
                                                        maxEdep, pitchX, pitchY,

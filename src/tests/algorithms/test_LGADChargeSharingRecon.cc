@@ -27,7 +27,8 @@ LGADChargeSharingRecon::Geometry makeTestGeometry(double electrodeSizeMM = 0.15)
     g.detectorThicknessMM = 0.05;
     g.pixelThicknessMM = 0.02;
     g.detectorZCenterMM = -10.0;
-    g.pixelsPerSide = 21;
+    g.numPixelsX = 21;
+    g.numPixelsY = 21;
     g.minIndexX = -10;
     g.maxIndexX = 10;
     g.minIndexY = -10;
@@ -109,6 +110,24 @@ TEST_CASE("LGADChargeSharingRecon digitizer supports a one-pad neighborhood", "[
 TEST_CASE("LGADChargeSharingRecon digitizer clips neighborhoods at sensor bounds", "[lgad][digitizer]") {
     const auto result = makeAlgorithm()->processSingleHit(makeHit(5.0, 5.0, 10, 10));
 
+    REQUIRE(result.neighbors.size() == 9);
+    double fractionSum = 0.0;
+    for (const auto& pad : result.neighbors)
+        fractionSum += pad.fraction;
+    CHECK_THAT(fractionSum, WithinAbs(1.0, 1e-12));
+}
+
+TEST_CASE("LGADChargeSharingRecon derives physical bounds for a centered 500 um grid",
+          "[lgad][digitizer][geometry]") {
+    const auto xRange = LGADChargeSharingRecon::indexRangeForBox(8.0, 0.5, 0.25);
+    CHECK(xRange.first == -16);
+    CHECK(xRange.second == 15);
+
+    auto hit = makeHit(7.75, 7.75, 15, 15);
+    hit.pixelHintMM = std::array<double, 3>{7.75, 7.75, 0.0};
+    hit.indexBounds = LGADChargeSharingRecon::SingleHitInput::IndexBounds{-16, 15, -16, 15};
+
+    const auto result = makeAlgorithm()->processSingleHit(hit);
     REQUIRE(result.neighbors.size() == 9);
     double fractionSum = 0.0;
     for (const auto& pad : result.neighbors)

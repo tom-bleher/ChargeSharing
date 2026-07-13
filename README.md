@@ -34,7 +34,7 @@ This plugin is structured to follow the upstream `eic/EICrecon` conventions (`al
 
 | Plugin library | Input collection | Output collections |
 |----------------|------------------|--------------------|
-| `B0TRK_lgad_chargesharing.so` | `B0TrackerHits` | `B0TrackerChargeSharingRawHits`, `B0TrackerChargeSharingHits`, `B0TrackerChargeSharingHitAssociations`, `B0TrackerClusterHits` |
+| `B0TRK_lgad_chargesharing.so` | `B0TrackerHits` | `B0TrackerChargeSharingRawHits`, `B0TrackerChargeSharingHits`, `B0TrackerChargeSharingRawHitLinks` (EDM4eic >= 8.7), `B0TrackerChargeSharingHitAssociations`, `B0TrackerClusterHits` |
 | `LGAD_chargesharing_benchmark.so` | (reads the above) | residual TTree in `-Phistsfile=...` |
 
 ## Build
@@ -54,14 +54,34 @@ Plugins are installed to `install/plugins/`. Following the standard
 set `export EICrecon_MY="$PWD/install"` from this directory. The sibling
 `AnalysisCS/EICrecon_MY` symlink points to the same install tree.
 
+When EICrecon provides `B0TrackerStubSeeder_factory`, the plugin also registers
+a non-truth charge-sharing chain (`B0TrackerCSSeeds` -> CKF -> ambiguity
+resolution -> `B0TrackerCSCKFTracks`). Point CMake at an EICrecon installation
+that provides that factory to enable the chain. Stock EICrecon builds retain
+the truth-seeded validation path but omit the data-like path.
+
+```bash
+export EICRECON_INSTALL=/path/to/EICrecon/install
+cmake -S . -B build-local-eicrecon \
+  -DEICrecon_DIR="$EICRECON_INSTALL/lib/cmake/EICrecon" \
+  -DCMAKE_INSTALL_PREFIX=$PWD/install-local-eicrecon
+cmake --build build-local-eicrecon --target install
+export LGAD_BUILD_DIR=$PWD/build-local-eicrecon
+export LGAD_PLUGIN_DIR=$PWD/install-local-eicrecon
+```
+
 ## Run
 
 ```bash
-export EICrecon_MY=$(pwd)/install   # or the AnalysisCS/EICrecon_MY symlink
+export EICrecon_MY="${LGAD_PLUGIN_DIR:-$(pwd)/install}"
+OUTPUT_COLLECTIONS=EventHeader,B0TrackerHits,B0TrackerChargeSharingRawHits,B0TrackerChargeSharingHits,B0TrackerChargeSharingHitAssociations,B0TrackerClusterHits
+# Available with EDM4eic >= 8.7; omit this line for older installations.
+OUTPUT_COLLECTIONS="$OUTPUT_COLLECTIONS,B0TrackerChargeSharingRawHitLinks"
 eicrecon \
     -Pplugins=B0TRK_lgad_chargesharing,LGAD_chargesharing_benchmark \
     -Phistsfile=lgad_hists.root \
-    -Ppodio:output_file=reco_output.edm4hep.root \
+    -Ppodio:output_file=reco_output.edm4eic.root \
+    -Ppodio:output_collections="$OUTPUT_COLLECTIONS" \
     sim_output.edm4hep.root
 ```
 
@@ -72,11 +92,16 @@ Everything runs inside `eic-shell` with an ePIC install sourced.
 needs. The event generator also requires `pyhepmc`.
 
 ```bash
-source "${EPIC_INSTALL:-/home/tomble/eic/dev/epic/install}/bin/thisepic.sh"
+export EPIC_INSTALL=/path/to/epic_b0pads500/install
+source "$EPIC_INSTALL/bin/thisepic.sh"
 # Only needed when pyhepmc is not already installed in the environment:
-export PYTHONPATH="${PYHEPMC_PATH:-/home/tomble/eic/local/pylib}${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="/path/to/pyhepmc${PYTHONPATH:+:$PYTHONPATH}"
 
-# Unit tests + B0 truth-residual benchmark (gen -> ddsim -> eicrecon -> validate)
+# Unit tests + B0 truth-residual benchmark (gen -> ddsim -> eicrecon -> validate).
+# Enable data-like track production when EICrecon provides the B0 stub seeder.
+export LGAD_ENABLE_DATA_TRACKING=1
+# Set to 0 when building against EDM4eic < 8.7.
+export LGAD_ENABLE_MODERN_LINKS=1
 bash test/run_all_tests.sh --nevents 50
 ```
 
@@ -116,10 +141,13 @@ flowchart LR
   subgraph B0TRK
     b0sim[B0TrackerHits] --> b0recon[LGADChargeSharingRecon digitizer]
     b0recon --> b0raw[B0TrackerChargeSharingRawHits]
+    b0recon --> b0links[...RawHitLinks]
     b0recon --> b0hits[B0TrackerChargeSharingHits: per-pad charges]
     b0recon --> b0assoc[...HitAssociations]
     b0hits --> b0clus[LGADGaussianClustering]
     b0clus --> b0meas[B0TrackerClusterHits]
+    b0meas --> b0seed[B0TrackerStubSeeder]
+    b0seed --> b0ckf[Non-truth B0 CKF]
   end
 ```
 

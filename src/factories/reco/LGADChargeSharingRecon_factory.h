@@ -9,10 +9,15 @@
 #include "extensions/jana/JOmniFactory.h"
 #include "services/algorithms_init/AlgorithmsInit_service.h"
 
+#include <edm4eic/EDM4eicVersion.h>
 #include <edm4eic/MCRecoTrackerHitAssociationCollection.h>
 #include <edm4eic/RawTrackerHitCollection.h>
 #include <edm4eic/TrackerHitCollection.h>
 #include <edm4hep/SimTrackerHitCollection.h>
+
+#if EDM4EIC_BUILD_VERSION >= EDM4EIC_VERSION(8, 7, 0)
+#include <edm4eic/MCRecoTrackerHitLinkCollection.h>
+#endif
 
 #include <memory>
 #include <string>
@@ -34,6 +39,9 @@ private:
     PodioInput<edm4hep::SimTrackerHit> m_in_simhits{this};
     PodioOutput<edm4eic::RawTrackerHit> m_out_raw_hits{this};
     PodioOutput<edm4eic::TrackerHit> m_out_hits{this};
+#if EDM4EIC_BUILD_VERSION >= EDM4EIC_VERSION(8, 7, 0)
+    PodioOutput<edm4eic::MCRecoTrackerHitLink> m_out_links{this};
+#endif
     PodioOutput<edm4eic::MCRecoTrackerHitAssociation> m_out_assocs{this};
 
     Service<AlgorithmsInit_service> m_algorithms_init{this};
@@ -68,7 +76,11 @@ public:
 
     void Process(int32_t /* run_number */, uint64_t /* event_number */) {
         m_algo->process({m_in_simhits()},
-                        {m_out_raw_hits().get(), m_out_hits().get(), m_out_assocs().get()});
+                        {m_out_raw_hits().get(), m_out_hits().get(),
+#if EDM4EIC_BUILD_VERSION >= EDM4EIC_VERSION(8, 7, 0)
+                         m_out_links().get(),
+#endif
+                         m_out_assocs().get()});
     }
 };
 

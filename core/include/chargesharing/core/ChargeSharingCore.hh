@@ -127,7 +127,6 @@ inline double calcWeightLogA(double distanceMM, double alphaPadViewAngle, double
 struct NeighborPixel {
     int di{0};            ///< Offset from center pixel (row)
     int dj{0};            ///< Offset from center pixel (col)
-    int globalIndex{-1};  ///< Global pixel index
     double centerX{0.0};  ///< Pixel center X (mm)
     double centerY{0.0};  ///< Pixel center Y (mm)
     double distance{0.0}; ///< Distance from hit to pixel center (mm)

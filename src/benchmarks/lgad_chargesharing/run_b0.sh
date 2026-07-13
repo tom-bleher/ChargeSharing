@@ -22,7 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 TEST_DIR="${REPO_ROOT}/test"
 COMPACT="${REPO_ROOT}/test_b0.xml"
-PLUGIN_DIR="${REPO_ROOT}/install"
+PLUGIN_DIR="${LGAD_PLUGIN_DIR:-${REPO_ROOT}/install}"
 
 if [ ! -d "$PLUGIN_DIR/plugins" ]; then
     echo "ERROR: Plugin install directory not found at $PLUGIN_DIR/plugins"
@@ -55,13 +55,20 @@ ddsim --compactFile "$COMPACT" \
 echo ""
 echo "=== Step 3: EICrecon (B0TRK plugin + benchmark monitor) ==="
 export EICrecon_MY="$PLUGIN_DIR"
+OUTPUT_COLLECTIONS="EventHeader,B0TrackerHits,B0TrackerChargeSharingRawHits,B0TrackerChargeSharingHits,B0TrackerChargeSharingHitAssociations,B0TrackerClusterHits"
+if [ "${LGAD_ENABLE_MODERN_LINKS:-1}" = "1" ]; then
+    OUTPUT_COLLECTIONS="${OUTPUT_COLLECTIONS},B0TrackerChargeSharingRawHitLinks"
+fi
+if [ "${LGAD_ENABLE_DATA_TRACKING:-0}" = "1" ]; then
+    OUTPUT_COLLECTIONS="${OUTPUT_COLLECTIONS},B0TrackerCSSeeds,B0TrackerCSSeedParameters,B0TrackerCSCKFTracks,B0TrackerCSCKFTrackAssociations"
+fi
 eicrecon \
     -Pplugins=B0TRK_lgad_chargesharing,LGAD_chargesharing_benchmark \
     -Pjana:plugin_path="${PLUGIN_DIR}/plugins" \
     -Pnthreads=1 \
     -Pjana:nevents="$NEVENTS" \
-    -Ppodio:output_file="$OUTDIR/b0_reco.edm4hep.root" \
-    -Ppodio:output_collections="B0TrackerChargeSharingHits,B0TrackerChargeSharingHitAssociations,B0TrackerClusterHits" \
+    -Ppodio:output_file="$OUTDIR/b0_reco.edm4eic.root" \
+    -Ppodio:output_collections="$OUTPUT_COLLECTIONS" \
     -Pdd4hep:xml_files="$COMPACT" \
     -Phistsfile="$OUTDIR/b0_bench.root" \
     "$OUTDIR/b0_sim.edm4hep.root"
