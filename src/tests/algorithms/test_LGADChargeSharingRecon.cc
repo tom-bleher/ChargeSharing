@@ -4,7 +4,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <edm4hep/MCParticleCollection.h>
+
 #include "algorithms/reco/LGADChargeSharingRecon.h"
+#include "algorithms/tracking/LGADTruthUtils.h"
 
 #include <algorithms/logger.h>
 
@@ -200,15 +203,13 @@ TEST_CASE("aggregateChannels sums coincident same-pad contributions into one cha
         makeContribution(0x10, /*t=*/1.2, /*q=*/1.0, /*sim=*/1),
     };
 
-    const auto channels =
-        LGADChargeSharingRecon::aggregateChannels(contribs, /*integrationWindowNs=*/1.0);
+    const auto channels = LGADChargeSharingRecon::aggregateChannels(contribs);
 
     REQUIRE(channels.size() == 1);
     CHECK(channels[0].cellID == 0x10);
     CHECK_THAT(channels[0].chargeC, WithinRel(4.0, 1e-12));
     CHECK_THAT(channels[0].energyGeV, WithinRel(4.0, 1e-12));
-    // Charge-weighted mean time: (3*1.0 + 1*1.2)/4 = 1.05
-    CHECK_THAT(channels[0].timeNs, WithinRel(1.05, 1e-12));
+    CHECK_THAT(channels[0].timeNs, WithinRel(1.0, 1e-12));
 
     REQUIRE(channels[0].contributors.size() == 2);
     double weightSum = 0.0;
@@ -222,19 +223,18 @@ TEST_CASE("aggregateChannels sums coincident same-pad contributions into one cha
     CHECK_THAT(weightSum, WithinAbs(1.0, 1e-12));
 }
 
-TEST_CASE("aggregateChannels splits same-pad contributions outside the integration window",
+TEST_CASE("aggregateChannels sums same-pad contributions regardless of time",
           "[lgad][digitizer][aggregation]") {
     std::vector<LGADChargeSharingRecon::PadContribution> contribs{
         makeContribution(0x10, /*t=*/1.0, /*q=*/2.0, /*sim=*/0),
         makeContribution(0x10, /*t=*/50.0, /*q=*/5.0, /*sim=*/1),
     };
 
-    const auto channels =
-        LGADChargeSharingRecon::aggregateChannels(contribs, /*integrationWindowNs=*/1.0);
+    const auto channels = LGADChargeSharingRecon::aggregateChannels(contribs);
 
-    REQUIRE(channels.size() == 2);
-    CHECK_THAT(channels[0].chargeC, WithinRel(2.0, 1e-12));
-    CHECK_THAT(channels[1].chargeC, WithinRel(5.0, 1e-12));
+    REQUIRE(channels.size() == 1);
+    CHECK_THAT(channels[0].chargeC, WithinRel(7.0, 1e-12));
+    CHECK_THAT(channels[0].timeNs, WithinRel(1.0, 1e-12));
 }
 
 TEST_CASE("aggregateChannels keeps distinct pads separate", "[lgad][digitizer][aggregation]") {
@@ -243,10 +243,22 @@ TEST_CASE("aggregateChannels keeps distinct pads separate", "[lgad][digitizer][a
         makeContribution(0x20, 1.0, 3.0, 0),
     };
 
-    const auto channels =
-        LGADChargeSharingRecon::aggregateChannels(contribs, /*integrationWindowNs=*/1.0);
+    const auto channels = LGADChargeSharingRecon::aggregateChannels(contribs);
 
     REQUIRE(channels.size() == 2);
     CHECK(channels[0].cellID == 0x10);
     CHECK(channels[1].cellID == 0x20);
+}
+
+TEST_CASE("generatedAncestor maps a Geant4 daughter to its generated particle",
+          "[lgad][truth][secondaries]") {
+    edm4hep::MCParticleCollection particles;
+    auto primary = particles.create();
+    primary.setGeneratorStatus(1);
+    auto secondary = particles.create();
+    secondary.setGeneratorStatus(0);
+    secondary.addToParents(primary);
+
+    CHECK(eicrecon::generatedAncestor(primary) == primary);
+    CHECK(eicrecon::generatedAncestor(secondary) == primary);
 }

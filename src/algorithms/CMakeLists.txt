@@ -8,6 +8,7 @@
 add_library(lgad_chargesharing_algorithms OBJECT
     reco/LGADChargeSharingRecon.cc
     tracking/LGADGaussianClustering.cc
+    tracking/LGADTrackTruthAssociation.cc
 )
 
 target_include_directories(lgad_chargesharing_algorithms PUBLIC

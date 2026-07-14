@@ -32,8 +32,8 @@ private:
 
     ParameterRef<std::string> m_readout{this, "readout", config().readout,
                                         "DD4hep readout name for segmentation lookup"};
-    ParameterRef<double> m_deltaT{this, "deltaT", config().deltaT,
-                                  "Time gate (ns) for union-find neighbour merge"};
+    ParameterRef<double> m_time_resolution{this, "timeResolutionNs", config().timeResolutionNs,
+                                           "Passive Measurement2D time uncertainty (ns)"};
     ParameterRef<double> m_fitErrorPercent{this, "fitErrorPercent", config().fitErrorPercent,
                                            "Fit uncertainty as percentage of cluster max charge"};
     ParameterRef<double> m_fitSigmaMM{this, "fitSigmaMM", config().fitSigmaMM,

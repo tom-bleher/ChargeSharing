@@ -3,6 +3,8 @@
 
 #include "LGADChargeSharingMonitor.h"
 
+#include "algorithms/tracking/LGADTruthUtils.h"
+
 #include <algorithms/interfaces/ActsSvc.h>
 #include <algorithms/tracking/ActsGeometryProvider.h>
 
@@ -18,6 +20,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 
 namespace eicrecon {
 
@@ -25,6 +28,20 @@ namespace {
 constexpr const char* kMonitorDirName = "LGADChargeSharing";
 constexpr const char* kMeasurementCollection = "B0TrackerClusterHits";
 constexpr const char* kAssociationCollection = "B0TrackerChargeSharingHitAssociations";
+
+struct MCParticleObjectIDLess {
+    bool operator()(const edm4hep::MCParticle& lhs, const edm4hep::MCParticle& rhs) const {
+        const auto lhsID = lhs.getObjectID();
+        const auto rhsID = rhs.getObjectID();
+        return lhsID.collectionID != rhsID.collectionID ? lhsID.collectionID < rhsID.collectionID
+                                                        : lhsID.index < rhsID.index;
+    }
+};
+
+struct TruthAccumulator {
+    Acts::Vector3 positionSum{Acts::Vector3::Zero()};
+    double weight{0.0};
+};
 }
 
 LGADChargeSharingMonitor::LGADChargeSharingMonitor() {
@@ -51,6 +68,11 @@ void LGADChargeSharingMonitor::Init() {
 
     m_tree->Branch("residualX", &m_residual_x, "residualX/D");
     m_tree->Branch("residualY", &m_residual_y, "residualY/D");
+    m_tree->Branch("dominantAncestorPurity", &m_dominant_ancestor_purity,
+                   "dominantAncestorPurity/D");
+    m_tree->Branch("dominantAncestorIndex", &m_dominant_ancestor_index,
+                   "dominantAncestorIndex/L");
+    m_tree->Branch("isMixed", &m_is_mixed, "isMixed/O");
 }
 
 void LGADChargeSharingMonitor::ProcessSequential(const JEvent& event) {
@@ -81,8 +103,7 @@ void LGADChargeSharingMonitor::fillData(
         return;
     }
 
-    Acts::Vector3 truthGlobal = Acts::Vector3::Zero();
-    double totalWeight = 0.0;
+    std::map<edm4hep::MCParticle, TruthAccumulator, MCParticleObjectIDLess> truthByAncestor;
 
     for (std::size_t i = 0; i < hits.size(); ++i) {
         const auto rawHit = hits[i].getRawHit();
@@ -109,18 +130,37 @@ void LGADChargeSharingMonitor::fillData(
             if (association.getRawHit() != rawHit || !association.getSimHit().isAvailable()) {
                 continue;
             }
-            const double weight =
-                hitWeight * std::max(0.0f, association.getWeight()) / associationWeight;
+            const double weight = hitWeight * std::max(0.0f, association.getWeight()) / associationWeight;
             const auto& truth = association.getSimHit().getPosition();
-            truthGlobal += weight * Acts::Vector3{truth.x, truth.y, truth.z};
-            totalWeight += weight;
+            const auto ancestor = generatedAncestor(association.getSimHit().getParticle());
+            if (!ancestor.isAvailable()) {
+                continue;
+            }
+            auto& accumulator = truthByAncestor[ancestor];
+            accumulator.positionSum += weight * Acts::Vector3{truth.x, truth.y, truth.z};
+            accumulator.weight += weight;
         }
     }
 
-    if (!(totalWeight > 0.0) || !m_acts_context) {
+    if (truthByAncestor.empty() || !m_acts_context) {
         return;
     }
-    truthGlobal /= totalWeight;
+
+    const auto dominant = std::max_element(
+        truthByAncestor.begin(), truthByAncestor.end(),
+        [](const auto& lhs, const auto& rhs) { return lhs.second.weight < rhs.second.weight; });
+    double totalWeight = 0.0;
+    for (const auto& [ancestor, accumulator] : truthByAncestor) {
+        (void)ancestor;
+        totalWeight += accumulator.weight;
+    }
+    if (!(totalWeight > 0.0) || !(dominant->second.weight > 0.0)) {
+        return;
+    }
+    const auto truthGlobal = dominant->second.positionSum / dominant->second.weight;
+    m_dominant_ancestor_purity = dominant->second.weight / totalWeight;
+    m_dominant_ancestor_index = dominant->first.getObjectID().index;
+    m_is_mixed = truthByAncestor.size() > 1;
 
     const Acts::Surface* surface = nullptr;
     for (const auto& [volumeID, candidate] : m_acts_context->surfaceMap()) {

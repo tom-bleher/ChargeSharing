@@ -8,6 +8,7 @@
 #include "extensions/jana/JOmniFactoryGeneratorT.h"
 #include "factories/reco/LGADChargeSharingRecon_factory.h"
 #include "factories/tracking/LGADGaussianClustering_factory.h"
+#include "factories/tracking/LGADTrackTruthAssociation_factory.h"
 
 // Stock EICrecon tracking factories, reused for a parallel truth-seeded B0 CKF
 // chain that consumes the charge-sharing Measurement2D instead of the standard
@@ -117,6 +118,11 @@ void InitPlugin(JApplication* app) {
             "B0TrackerCSCKFTruthSeededTrackAssociations",
         },
         app));
+
+    app->Add(new JOmniFactoryGeneratorT<eicrecon::LGADTrackTruthAssociation_factory>(
+        "B0TrackerCSCKFTruthSeededTrackRootAssociations",
+        {"B0TrackerCSCKFTruthSeededTracks", "B0TrackerChargeSharingHitAssociations"},
+        {"B0TrackerCSCKFTruthSeededTrackRootAssociations"}, {}, app));
 }
 
 } // extern "C"

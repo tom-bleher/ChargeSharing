@@ -10,6 +10,7 @@ plugin_add_event_model(${PLUGIN_NAME})
 # Out-of-tree builds consume EICrecon service headers (services/log/...) from
 # the installed include tree rather than the in-tree src/ directory.
 plugin_include_directories(${PLUGIN_NAME} SYSTEM PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
     ${EICrecon_INCLUDE_DIR}
     ${EICrecon_INCLUDE_DIR}/EICrecon
 )

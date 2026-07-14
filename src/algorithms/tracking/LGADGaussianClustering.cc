@@ -90,8 +90,8 @@ void LGADGaussianClustering::init() {
     m_decoder = m_seg.decoder();
     m_acts_context = algorithms::ActsSvc::instance().acts_geometry_provider();
 
-    info("LGADGaussianClustering initialized: readout={}, deltaT={} ns",
-         m_cfg.readout, m_cfg.deltaT);
+    info("LGADGaussianClustering initialized: readout={}, timeResolutionNs={} ns",
+         m_cfg.readout, m_cfg.timeResolutionNs);
 }
 
 // ============================================================================
@@ -121,9 +121,7 @@ void LGADGaussianClustering::process(const Input& input, const Output& output) c
             for (std::size_t b = a + 1; b < hitIndices.size(); ++b) {
                 const int i = hitIndices[a];
                 const int j = hitIndices[b];
-                if (std::abs((*hits)[i].getTime() - (*hits)[j].getTime()) < m_cfg.deltaT) {
-                    uf.merge(i, j);
-                }
+                uf.merge(i, j);
             }
         }
 
@@ -137,9 +135,7 @@ void LGADGaussianClustering::process(const Input& input, const Output& output) c
                 continue;
             for (int i : hitIndices) {
                 for (int j : it->second) {
-                    if (std::abs((*hits)[i].getTime() - (*hits)[j].getTime()) < m_cfg.deltaT) {
-                        uf.merge(i, j);
-                    }
+                    uf.merge(i, j);
                 }
             }
         }
@@ -269,7 +265,7 @@ void LGADGaussianClustering::reconstructCluster(const Output& output,
     cluster.setLoc({static_cast<float>(reconX), static_cast<float>(reconY)});
     cluster.setTime(static_cast<float>(earliestTime));
 
-    const float timeErr = static_cast<float>(m_cfg.deltaT / std::sqrt(12.0));
+    const float timeErr = static_cast<float>(m_cfg.timeResolutionNs);
     cluster.setCovariance({static_cast<float>(sigma2X), static_cast<float>(sigma2Y), timeErr * timeErr, 0.0f});
 
     for (const auto& hit : hits) {

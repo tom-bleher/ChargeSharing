@@ -36,7 +36,7 @@ This plugin is structured to follow the upstream `eic/EICrecon` conventions (`al
 
 | Plugin library | Input collection | Output collections |
 |----------------|------------------|--------------------|
-| `B0TRK_lgad_chargesharing.so` | `B0TrackerHits`, `B0TrackerTruthSeeds` | `B0TrackerChargeSharingRawHits`, `B0TrackerChargeSharingHits`, `B0TrackerChargeSharingRawHitLinks` (EDM4eic >= 8.7), `B0TrackerChargeSharingHitAssociations`, `B0TrackerClusterHits`, `B0TrackerCSCKFTruthSeededTracks` |
+| `B0TRK_lgad_chargesharing.so` | `B0TrackerHits`, `B0TrackerTruthSeeds` | `B0TrackerChargeSharingRawHits`, `B0TrackerChargeSharingHits`, `B0TrackerChargeSharingRawHitLinks` (EDM4eic >= 8.7), `B0TrackerChargeSharingHitAssociations`, `B0TrackerClusterHits`, `B0TrackerCSCKFTruthSeededTracks`, `B0TrackerCSCKFTruthSeededTrackRootAssociations` |
 | `LGAD_chargesharing_benchmark.so` | (reads the above) | residual TTree in `-Phistsfile=...` |
 
 ## Build
@@ -60,7 +60,7 @@ set `export EICrecon_MY="$PWD/install"` from this directory. The sibling
 
 ```bash
 export EICrecon_MY="${LGAD_PLUGIN_DIR:-$(pwd)/install}"
-OUTPUT_COLLECTIONS=EventHeader,MCParticles,B0TrackerHits,B0TrackerChargeSharingRawHits,B0TrackerChargeSharingHits,B0TrackerChargeSharingHitAssociations,B0TrackerClusterHits,B0TrackerCSCKFTruthSeededTrajectories,B0TrackerCSCKFTruthSeededTrackParameters,B0TrackerCSCKFTruthSeededTracks,B0TrackerCSCKFTruthSeededTrackAssociations
+OUTPUT_COLLECTIONS=EventHeader,MCParticles,B0TrackerHits,B0TrackerChargeSharingRawHits,B0TrackerChargeSharingHits,B0TrackerChargeSharingHitAssociations,B0TrackerClusterHits,B0TrackerCSCKFTruthSeededTrajectories,B0TrackerCSCKFTruthSeededTrackParameters,B0TrackerCSCKFTruthSeededTracks,B0TrackerCSCKFTruthSeededTrackAssociations,B0TrackerCSCKFTruthSeededTrackRootAssociations
 # Available with EDM4eic >= 8.7; omit this line for older installations.
 OUTPUT_COLLECTIONS="$OUTPUT_COLLECTIONS,B0TrackerChargeSharingRawHitLinks,B0TrackerCSCKFTruthSeededTrackLinks"
 eicrecon \
@@ -109,13 +109,14 @@ it is never inferred from the segmentation pitch.
 | `amplificationFactor` | double | 20 | AC-LGAD gain |
 | `noiseEnabled` | bool | true | Noise injection |
 | `noiseElectronCount` | double | 500 | Electronic noise RMS |
+| `thresholdElectrons` | double | 0 | Per-pad threshold after summed charge and noise |
 
 ### `LGADGaussianClustering`
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `readout` | string | - | DD4hep readout name |
-| `deltaT` | double | 1.0 ns | Time gate for union-find merge |
+| `timeResolutionNs` | double | 0.289 ns | Passive `Measurement2D` time uncertainty |
 | `fitErrorPercent` | double | 5.0 | Fit uncertainty as % of max charge |
 
 ## Pipeline
@@ -145,16 +146,19 @@ For each `SimTrackerHit`, `LGADChargeSharingRecon`:
 3. Optionally applies per-pixel gain variation and electronic noise.
 4. Emits pad-centered digitized hits carrying the shared charge and associations back to the truth hit.
 
-`LGADGaussianClustering` runs union-find over DD4hep neighbours within `deltaT`
-and emits one `Measurement2D` per cluster. This is the pipeline's only position
-estimation stage.
+All deposits in one event that induce charge on the same pad are summed before
+electronics; their earliest time is retained only as output metadata. `LGADGaussianClustering`
+runs union-find over DD4hep neighbours and emits one `Measurement2D` per cluster.
+Neither stage uses time to form channels or clusters.
 
 ## Benchmark output
 
 Loading `LGAD_chargesharing_benchmark` writes one compact TTree at
-`LGADChargeSharing/hits` in the shared `-Phistsfile=...` file. It contains only
-the double branches `residualX` and `residualY`, in millimetres, measured from
-the final `B0TrackerClusterHits` positions against their associated truth hits.
+`LGADChargeSharing/hits` in the shared `-Phistsfile=...` file. It contains
+`residualX`, `residualY`, `dominantAncestorPurity`, `dominantAncestorIndex`, and
+`isMixed`. Residuals use the dominant generated ancestor's charge-weighted truth
+position, so deposits from its Geant4 daughters remain part of its response while
+deposits from another generated particle are explicitly reported as mixed.
 
 ## Relationship to the standalone Geant4 harness
 

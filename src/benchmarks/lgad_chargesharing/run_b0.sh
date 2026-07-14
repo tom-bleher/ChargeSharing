@@ -55,7 +55,7 @@ ddsim --compactFile "$COMPACT" \
 echo ""
 echo "=== Step 3: EICrecon (B0TRK plugin + benchmark monitor) ==="
 export EICrecon_MY="$PLUGIN_DIR"
-OUTPUT_COLLECTIONS="EventHeader,MCParticles,B0TrackerHits,B0TrackerChargeSharingRawHits,B0TrackerChargeSharingHits,B0TrackerChargeSharingHitAssociations,B0TrackerClusterHits,B0TrackerCSCKFTruthSeededTrajectories,B0TrackerCSCKFTruthSeededTrackParameters,B0TrackerCSCKFTruthSeededTracks,B0TrackerCSCKFTruthSeededTrackAssociations"
+OUTPUT_COLLECTIONS="EventHeader,MCParticles,B0TrackerHits,B0TrackerChargeSharingRawHits,B0TrackerChargeSharingHits,B0TrackerChargeSharingHitAssociations,B0TrackerClusterHits,B0TrackerCSCKFTruthSeededTrajectories,B0TrackerCSCKFTruthSeededTrackParameters,B0TrackerCSCKFTruthSeededTracks,B0TrackerCSCKFTruthSeededTrackAssociations,B0TrackerCSCKFTruthSeededTrackRootAssociations"
 if [ "${LGAD_ENABLE_MODERN_LINKS:-1}" = "1" ]; then
     OUTPUT_COLLECTIONS="${OUTPUT_COLLECTIONS},B0TrackerChargeSharingRawHitLinks,B0TrackerCSCKFTruthSeededTrackLinks"
 fi

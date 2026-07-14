@@ -34,6 +34,9 @@ private:
     TTree* m_tree{nullptr};
     double m_residual_x{0.0};
     double m_residual_y{0.0};
+    double m_dominant_ancestor_purity{0.0};
+    long long m_dominant_ancestor_index{-1};
+    bool m_is_mixed{false};
 };
 
 } // namespace eicrecon

@@ -428,7 +428,7 @@ void LGADChargeSharingRecon::process(const Input& input, const Output& output) c
     // electronics), then apply noise, threshold and digitization once per
     // channel and emit the raw/reconstructed hits.
     // ------------------------------------------------------------------
-    const auto channels = aggregateChannels(contributions, m_cfg.integrationWindowNs);
+    const auto channels = aggregateChannels(contributions);
     const double thresholdChargeC = m_cfg.thresholdElectrons * kElementaryChargeC;
 
     for (const auto& channel : channels) {
@@ -473,54 +473,39 @@ void LGADChargeSharingRecon::process(const Input& input, const Output& output) c
 // Channel aggregation (pure; unit-tested).
 // ---------------------------------------------------------------------------
 std::vector<LGADChargeSharingRecon::AggregatedChannel>
-LGADChargeSharingRecon::aggregateChannels(const std::vector<PadContribution>& contributions,
-                                          double integrationWindowNs) {
-    // Accumulator carrying the extra running sums that the public channel type
-    // does not need to expose (time anchor, charge-weighted time numerator).
+LGADChargeSharingRecon::aggregateChannels(const std::vector<PadContribution>& contributions) {
     struct Bucket {
         AggregatedChannel channel;
-        double anchorTimeNs{0.0};
-        double chargeTimeSumC{0.0};
     };
 
     std::vector<Bucket> buckets;
-    std::unordered_map<std::uint64_t, std::vector<std::size_t>> bucketsByCell;
+    std::unordered_map<std::uint64_t, std::size_t> bucketsByCell;
 
     for (const auto& c : contributions) {
         if (!(c.inducedChargeC > 0.0)) {
             continue;
         }
 
-        auto& indices = bucketsByCell[c.cellID];
-        Bucket* bucket = nullptr;
-        for (std::size_t idx : indices) {
-            if (std::abs(buckets[idx].anchorTimeNs - c.timeNs) < integrationWindowNs) {
-                bucket = &buckets[idx];
-                break;
-            }
-        }
-        if (bucket == nullptr) {
+        const auto [it, inserted] = bucketsByCell.emplace(c.cellID, buckets.size());
+        if (inserted) {
             Bucket fresh{};
             fresh.channel.cellID = c.cellID;
             fresh.channel.position = c.position;
-            fresh.anchorTimeNs = c.timeNs;
-            indices.push_back(buckets.size());
+            fresh.channel.timeNs = c.timeNs;
             buckets.push_back(fresh);
-            bucket = &buckets.back();
         }
+        auto& bucket = buckets[it->second];
 
-        bucket->channel.chargeC += c.inducedChargeC;
-        bucket->channel.energyGeV += c.inducedEnergyGeV;
-        bucket->chargeTimeSumC += c.inducedChargeC * c.timeNs;
-        bucket->channel.contributors.emplace_back(c.simHitIndex, c.inducedChargeC);
+        bucket.channel.chargeC += c.inducedChargeC;
+        bucket.channel.energyGeV += c.inducedEnergyGeV;
+        bucket.channel.timeNs = std::min(bucket.channel.timeNs, c.timeNs);
+        bucket.channel.contributors.emplace_back(c.simHitIndex, c.inducedChargeC);
     }
 
     std::vector<AggregatedChannel> channels;
     channels.reserve(buckets.size());
     for (auto& bucket : buckets) {
         AggregatedChannel channel = std::move(bucket.channel);
-        channel.timeNs =
-            (channel.chargeC > 0.0) ? bucket.chargeTimeSumC / channel.chargeC : bucket.anchorTimeNs;
         // Convert stored induced charge into a normalized truth weight.
         for (auto& [simHitIndex, weight] : channel.contributors) {
             weight = (channel.chargeC > 0.0) ? weight / channel.chargeC : 0.0;

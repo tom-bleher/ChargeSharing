@@ -131,12 +131,12 @@ public:
     };
 
     /// One readout channel after summing every induced contribution that lands
-    /// on the same pad within the integration window. Electronics (noise,
-    /// threshold, digitization) are applied to this aggregate exactly once.
+    /// on the same pad in one event. Electronics (noise, threshold,
+    /// digitization) are applied to this aggregate exactly once.
     struct AggregatedChannel {
         std::uint64_t cellID{0};
         edm4hep::Vector3f position{};
-        double timeNs{0.0};    ///< Charge-weighted mean time (ns)
+        double timeNs{0.0};    ///< Earliest contributing time (ns)
         double chargeC{0.0};   ///< Summed induced charge, pre-electronics (C)
         double energyGeV{0.0}; ///< Summed induced energy (GeV)
         /// (simHitIndex, weight) with weight = this contributor's induced charge
@@ -144,12 +144,11 @@ public:
         std::vector<std::pair<int, double>> contributors;
     };
 
-    /// Sum induced pad contributions into readout channels. Contributions on the
-    /// same cellID whose times fall within integrationWindowNs are merged; those
-    /// further apart form separate channels. Pure function (no DD4hep state) so
-    /// the aggregate-before-electronics ordering can be unit-tested directly.
+    /// Sum all induced pad contributions in one event into their cellID channel.
+    /// Pure function (no DD4hep state) so aggregate-before-electronics ordering
+    /// can be unit-tested directly.
     static std::vector<AggregatedChannel>
-    aggregateChannels(const std::vector<PadContribution>& contributions, double integrationWindowNs);
+    aggregateChannels(const std::vector<PadContribution>& contributions);
 
     /// Process a single SimTrackerHit (used directly by unit tests).
     SingleHitResult processSingleHit(const SingleHitInput& input) const;

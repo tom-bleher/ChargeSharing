@@ -16,8 +16,9 @@ struct LGADGaussianClusteringConfig {
     /// DD4hep readout name (required; set per detector).
     std::string readout;
 
-    /// Time gate (ns) for union-find neighbour merge.
-    double deltaT{1.0};
+    /// Passive time uncertainty (ns) recorded in Measurement2D covariance.
+    /// It never affects channel or cluster formation.
+    double timeResolutionNs{0.2886751345948129};
 
     /// Fit uncertainty as a percentage of the cluster's max charge.
     double fitErrorPercent{5.0};
